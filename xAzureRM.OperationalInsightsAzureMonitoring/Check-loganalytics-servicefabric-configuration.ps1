@@ -146,97 +146,84 @@ function Check-ETWProviderLogging {
 <#
     Check Azure Diagnostics Configuration for a Service Fabric cluster
 #>
-function Check-ServiceFabricVMDiagnostics {
+function Check-ServiceFabricScaleSetDiagnostics {
     param(
-    [array]$serviceFabricVMs
+    [psobject]$scaleSetDiagnostics
     )
 
     $storageAccountsFound = @()
 
-    foreach($vm in $serviceFabricVMs) 
-    {
-        $id = $cluster.Name + "\" + $vm.Name
-        Write-Verbose ("Checking $id")
-        $sfReliableActorTable = $null
-        $sfReliableServiceTable = $null
-        $sfOperationalTable = $null
+    Write-Verbose ("Checking " + $scaleSetDiagnostics)
 
-        $DiagnosticSettings = (Get-AzureRmVMDiagnosticsExtension -ResourceGroupName $vm.ResourceGroupName -VMName $vm.ResourceName)
+    $sfReliableActorTable = $null
+    $sfReliableServiceTable = $null
+    $sfOperationalTable = $null
 
-        if ( $DiagnosticSettings.PublicSettings ) 
-        {
-            Write-Debug ("Diagnostics version: " + $DiagnosticSettings.TypeHandlerVersion)
+    Write-Debug $scaleSetDiagnostics
 
-            $publicSettings = ConvertFrom-Json -InputObject $DiagnosticSettings.PublicSettings
-
-            Write-Debug $publicSettings
-
-            $serviceFabricProviderList = ""
-            $etwManifestProviderList = ""
+    $serviceFabricProviderList = ""
+    $etwManifestProviderList = ""
     
-            if ( $publicSettings.xmlCfg ) 
-            {
-                Write-Debug ("Found XMLcfg")
+    if ( $scaleSetDiagnostics.xmlCfg ) 
+	{
+		Write-Debug ("Found XMLcfg")
 
-                $xmlCfg = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($publicSettings.xmlCfg))
+		$xmlCfg = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($scaleSetDiagnostics.xmlCfg))
 
-                Write-Debug $xmlCfg
+		Write-Debug $xmlCfg
 
-                $etwProviders = Select-Xml -Content $xmlCfg -XPath "//EtwProviders"                
+		$etwProviders = Select-Xml -Content $xmlCfg -XPath "//EtwProviders"                
 
-                $serviceFabricProviderList = $etwProviders.Node.EtwEventSourceProviderConfiguration
-                $etwManifestProviderList = $etwProviders.Node.EtwManifestProviderConfiguration
-            } elseif ($publicSettings.WadCfg ) 
-            {
-                Write-Debug ("Found WADcfg")
+		$serviceFabricProviderList = $etwProviders.Node.EtwEventSourceProviderConfiguration
+		$etwManifestProviderList = $etwProviders.Node.EtwManifestProviderConfiguration
+	} elseif ($scaleSetDiagnostics.WadCfg ) 
+    {
+        Write-Debug ("Found WADcfg")
             
-                Write-Debug $publicSettings.WadCfg
+        Write-Debug $scaleSetDiagnostics.WadCfg
 
-                $serviceFabricProviderList = $publicSettings.WadCfg.DiagnosticMonitorConfiguration.EtwProviders.EtwEventSourceProviderConfiguration
-                $etwManifestProviderList = $publicSettings.WadCfg.DiagnosticMonitorConfiguration.EtwProviders.EtwManifestProviderConfiguration                                             
-            } else
-            {
-                Write-Error "Unable to parse Azure Diagnostics setting for $id"
-            }
+        $serviceFabricProviderList = $scaleSetDiagnostics.WadCfg.DiagnosticMonitorConfiguration.EtwProviders.EtwEventSourceProviderConfiguration
+        $etwManifestProviderList = $scaleSetDiagnostics.WadCfg.DiagnosticMonitorConfiguration.EtwProviders.EtwManifestProviderConfiguration                                             
+    } else
+    {
+        Write-Error "Unable to parse Azure Diagnostics setting for $id"
+		Write-Warning ("$id does not have diagnostics enabled")
+    }
 
-            foreach ($provider in $serviceFabricProviderList) 
-            {
-                Write-Debug ("Event Source Provider: " + $provider.Provider + " Destination: " + $provider.DefaultEvents.eventDestination)
-                if ($provider.Provider -eq "Microsoft-ServiceFabric-Actors")
-                {
-                    $sfReliableActorTable = $provider.DefaultEvents.eventDestination 
-                } elseif ($provider.Provider -eq "Microsoft-ServiceFabric-Services") 
-                { 
-                    $sfReliableServiceTable = $provider.DefaultEvents.eventDestination 
-                } else 
-                {
-                    Check-ETWProviderLogging $id $provider.Provider "ETWEventTable" $provider.DefaultEvents.eventDestination
-                }
-            }
-            foreach ($provider in $etwManifestProviderList)
-            {
-                Write-Debug ("Manifest Provider: " + $provider.Provider + " Destination: " + $provider.DefaultEvents.eventDestination)
-                if ($provider.Provider -eq "cbd93bc2-71e5-4566-b3a7-595d8eeca6e8")
-                {
-                    $sfOperationalTable = $provider.DefaultEvents.eventDestination 
-                } else 
-                {
-                    Check-ETWProviderLogging $id $provider.Provider "ETWEventTable" $provider.DefaultEvents.eventDestination
-                }
-            }
-            
-            Check-ETWProviderLogging $id "Microsoft-ServiceFabric-Actors" "ServiceFabricReliableActorEventTable" $sfReliableActorTable
-            Check-ETWProviderLogging $id "Microsoft-ServiceFabric-Services" "ServiceFabricReliableServiceEventTable" $sfReliableServiceTable
-            Check-ETWProviderLogging $id "cbd93bc2-71e5-4566-b3a7-595d8eeca6e8 (System events)" "ServiceFabricSystemEventTable" $sfOperationalTable
-            
-            Write-Verbose ("StorageAccount: " + $publicSettings.StorageAccount)
-
-            $storageAccountsFound += ($publicSettings.StorageAccount)
-
-        } else {
-            Write-Warning ("$id does not have diagnostics enabled")
+    foreach ($provider in $serviceFabricProviderList) 
+    {
+        Write-Debug ("Event Source Provider: " + $provider.Provider + " Destination: " + $provider.DefaultEvents.eventDestination)
+        if ($provider.Provider -eq "Microsoft-ServiceFabric-Actors")
+        {
+            $sfReliableActorTable = $provider.DefaultEvents.eventDestination 
+        } elseif ($provider.Provider -eq "Microsoft-ServiceFabric-Services") 
+        { 
+            $sfReliableServiceTable = $provider.DefaultEvents.eventDestination 
+        } else 
+        {
+            Check-ETWProviderLogging $id $provider.Provider "ETWEventTable" $provider.DefaultEvents.eventDestination
         }
     }
+    foreach ($provider in $etwManifestProviderList)
+    {
+        Write-Debug ("Manifest Provider: " + $provider.Provider + " Destination: " + $provider.DefaultEvents.eventDestination)
+        if ($provider.Provider -eq "cbd93bc2-71e5-4566-b3a7-595d8eeca6e8")
+        {
+            $sfOperationalTable = $provider.DefaultEvents.eventDestination 
+        } else 
+        {
+            Check-ETWProviderLogging $id $provider.Provider "ETWEventTable" $provider.DefaultEvents.eventDestination
+        }
+    }
+            
+    Check-ETWProviderLogging $id "Microsoft-ServiceFabric-Actors" "ServiceFabricReliableActorEventTable" $sfReliableActorTable
+    Check-ETWProviderLogging $id "Microsoft-ServiceFabric-Services" "ServiceFabricReliableServiceEventTable" $sfReliableServiceTable
+    Check-ETWProviderLogging $id "cbd93bc2-71e5-4566-b3a7-595d8eeca6e8 (System events)" "ServiceFabricSystemEventTable" $sfOperationalTable
+            
+    Write-Verbose ("StorageAccount: " + $scaleSetDiagnostics.StorageAccount)
+
+    $storageAccountsFound += ($scaleSetDiagnostics.StorageAccount)
+    
     return ($storageAccountsFound)
 }
 
@@ -267,9 +254,19 @@ $storageAccountList = @()
 
 foreach($cluster in $serviceFabricClusters) {
     Write-Verbose ("Checking cluster: " + $cluster.Name)
-    $serviceFabricVMs = ($allResources.Where({($_.ResourceType -eq "Microsoft.Compute/virtualMachines") -and ($_.ResourceGroupName -eq $cluster.ResourceGroupName)}))
+    $scaleSet = ($allResources.Where({($_.ResourceType -eq "Microsoft.Compute/virtualMachineScaleSets") -and ($_.ResourceGroupName -eq $cluster.ResourceGroupName)}))
 
-    $storageAccountList += (Check-ServiceFabricVMDiagnostics $serviceFabricVMs)
+    foreach($set in $scaleSet) {
+        $resource = Get-AzureRmResource -ResourceId $set.ResourceId
+
+        $extensions = $resource.Properties.VirtualMachineProfile.ExtensionProfile.Extensions
+
+        foreach($ext in $extensions) {
+            if ($ext.Properties.Publisher -eq "Microsoft.Azure.Diagnostics" -and $ext.Properties.Type -eq "IaaSDiagnostics") {
+                $storageAccountList += (Check-ServiceFabricScaleSetDiagnostics $ext.Properties.Settings)
+            }
+        }
+    }
 }
 
 $storageAccountList = $storageAccountList | Sort-Object | Get-Unique
